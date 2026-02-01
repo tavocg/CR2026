@@ -31,6 +31,16 @@ COLORS = {
     "null": "#000",
 }
 
+PARTIES = ["ppso", "pln", "cac", "pusc", "fa"]
+
+PARTY_NAMES = {
+    "ppso": "PPSO",
+    "pln": "PLN",
+    "cac": "CAC",
+    "pusc": "PUSC",
+    "fa": "FA",
+}
+
 OUTPUT_HTML = "public/index.html"
 
 
@@ -40,7 +50,7 @@ def format_ts(ts):
 
 
 def plot_votes_over_time(df):
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=(10, 10))
 
     x_labels = df["timestamp"].apply(format_ts)
     x = range(len(df))
@@ -84,7 +94,7 @@ def plot_votes_over_time(df):
         label="Umbral 40%",
     )
 
-    ax.set_title("Votos en el tiempo")
+    ax.set_title("Porcentaje del padrón alcanzado vs Cortes TSE")
     ax.set_xlabel("Hora")
     ax.set_ylabel("Porcentaje del padrón (%)")
 
@@ -104,39 +114,118 @@ def plot_votes_over_time(df):
     return base64.b64encode(buffer.read()).decode("utf-8")
 
 
-def generate_html(img_base64):
+def compute_stats(df):
+    stats = df.copy()
+
+    stats["total_votes"] = stats[PARTIES + ["blank", "null"]].sum(axis=1)
+    stats["valid_votes"] = stats[PARTIES].sum(axis=1)
+    stats["turnout_pct"] = (stats["total_votes"] / REGISTER) * 100
+
+    # Incrementos por corte
+    for col in PARTIES:
+        stats[f"delta_{col}"] = stats[col].diff().fillna(0)
+
+    return stats
+
+
+def generate_results_table(stats):
+    last = stats.iloc[-1]
+
+    rows = []
+    for p in PARTIES:
+        rows.append(f"""
+        <tr>
+            <td>
+                {PARTY_NAMES[p]}
+            </td>
+            <td>{last[p]:,}</td>
+            <td>{last[f"delta_{p}"]:+,}</td>
+        </tr>
+        """)
+
+    return f"""
+    <table>
+        <thead>
+            <tr>
+                <th>Partido</th>
+                <th>Votos</th>
+                <th>Δ último corte</th>
+            </tr>
+        </thead>
+        <tbody>
+            {"".join(rows)}
+        </tbody>
+    </table>
+    """
+
+
+def generate_turnout_summary(stats):
+    last = stats.iloc[-1]
+    return f"""
+    <div class="summary">
+        <p><strong>Participación:</strong> {last["total_votes"]:,} votos</p>
+        <p><strong>Porcentaje del padrón:</strong> {last["turnout_pct"]:.2f}%</p>
+    </div>
+    """
+
+
+def generate_html(img_base64, turnout_html, table_html):
     return f"""<!DOCTYPE html>
 <html lang="es">
-<head>
-    <meta charset="utf-8">
-    <title>Elecciones Costa Rica 2026 | Primera Ronda</title>
-    <style>
-        body {{
-            font-family: Arial, sans-serif;
-            background: #f5f5f5;
-            padding: 2rem;
-        }}
-        h1 {{
-            text-align: center;
-        }}
-        .chart {{
-            text-align: center;
-        }}
-        img {{
-            max-width: 100%;
-            background: white;
-            padding: 1rem;
-            border-radius: 8px;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.15);
-        }}
-    </style>
-</head>
-<body>
-    <h1>Elecciones Costa Rica 2026 | Primera Ronda</h1>
-    <div class="chart">
-        <img src="data:image/png;base64,{img_base64}" alt="Votos en el tiempo">
-    </div>
-</body>
+    <head>
+        <meta charset="utf-8">
+        <title>Elecciones Costa Rica 2026 | Primera Ronda</title>
+        <style>
+            body {{
+                font-family: Arial, sans-serif;
+                padding: 1rem;
+                max-width: 60rem;
+                margin: auto;
+            }}
+            h1, h2 {{
+                text-align: center;
+            }}
+            .chart {{
+                margin: 2rem 0;
+                text-align: center;
+            }}
+            img.chart-img {{
+                width: 100%;
+                max-width: 48rem;
+            }}
+            table {{
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 2rem;
+            }}
+            th, td {{
+                padding: 0.6rem;
+                border-bottom: 1px solid #ddd;
+                text-align: center;
+            }}
+            th {{
+                background: #f3f3f3;
+            }}
+            .flag {{
+                width: 24px;
+                vertical-align: middle;
+                margin-right: 0.4rem;
+            }}
+            .summary {{
+                margin: 1.5rem 0;
+                text-align: center;
+                font-size: 1.1rem;
+            }}
+        </style>
+    </head>
+    <body>
+        <h1>Elecciones Costa Rica 2026 | Primera Ronda</h1>
+        {turnout_html}
+        {table_html}
+        <div class="chart">
+            <img class="chart-img" src="data:image/png;base64,{img_base64}" alt="Votos en el tiempo">
+        </div>
+    </body>
 </html>
 """
 
@@ -156,7 +245,14 @@ if __name__ == "__main__":
     os.makedirs("public", exist_ok=True)
 
     img_base64 = plot_votes_over_time(df)
-    html = generate_html(img_base64)
+
+    stats = compute_stats(df)
+
+    img_base64 = plot_votes_over_time(df)
+    turnout_html = generate_turnout_summary(stats)
+    table_html = generate_results_table(stats)
+
+    html = generate_html(img_base64, turnout_html, table_html)
 
     with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
         f.write(html)
