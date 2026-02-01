@@ -8,7 +8,7 @@ from io import BytesIO
 import pandas as pd
 import matplotlib.pyplot as plt
 
-REGISTER = 3500000
+REGISTER = 3541908
 
 COLUMNS = [
     "timestamp",
@@ -17,8 +17,10 @@ COLUMNS = [
     "cac",
     "pusc",
     "fa",
-    "blank",
-    "null",
+    "nr",
+    "plp",
+    "valid",  # suma de los votos de los partidos
+    "null",  # incluye nulos + blancos
 ]
 
 COLORS = {
@@ -27,18 +29,22 @@ COLORS = {
     "cac": "#e3051a",
     "pusc": "#13017c",
     "fa": "#efd800",
+    "nr": "#9ddbea",
+    "plp": "#f16528",
     "blank": "#c2c2c2",
     "null": "#000",
 }
 
-PARTIES = ["ppso", "pln", "cac", "pusc", "fa"]
+PARTIES = ["ppso", "pln", "cac", "pusc", "fa", "nr", "plp"]
 
 PARTY_NAMES = {
-    "ppso": "PPSO",
+    "ppso": "PSD",
     "pln": "PLN",
-    "cac": "CAC",
+    "cac": "PAC",
     "pusc": "PUSC",
     "fa": "FA",
+    "nr": "NR",
+    "plp": "PLP",
 }
 
 OUTPUT_HTML = "public/index.html"
@@ -55,13 +61,12 @@ def plot_votes_over_time(df):
     x_labels = df["timestamp"].apply(format_ts)
     x = range(len(df))
 
-    for col in df.columns:
-        if col == "timestamp":
-            continue
+    max_pct = 0
 
+    for col in PARTIES:
         color = COLORS.get(col, "#333333")
-
-        percentages = (df[col] / REGISTER) * 100
+        percentages = (df[col] / df["valid"]) * 100
+        max_pct = max(max_pct, percentages.max())
 
         ax.plot(
             x,
@@ -86,13 +91,14 @@ def plot_votes_over_time(df):
             va="center",
         )
 
-    ax.axhline(
-        40,
-        color="red",
-        linestyle="--",
-        linewidth=2,
-        label="Umbral 40%",
-    )
+    if max_pct >= 38:
+        ax.axhline(
+            40,
+            color="red",
+            linestyle="--",
+            linewidth=2,
+            label="Umbral 40%",
+        )
 
     ax.set_title("Porcentaje del padrón alcanzado vs Cortes TSE")
     ax.set_xlabel("Hora")
@@ -100,8 +106,6 @@ def plot_votes_over_time(df):
 
     ax.set_xticks(list(x))
     ax.set_xticklabels(x_labels, rotation=45)
-
-    ax.set_ylim(0, max(45, ax.get_ylim()[1]))
     ax.grid(True, axis="y", linestyle="--", alpha=0.6)
     ax.legend()
 
@@ -188,19 +192,17 @@ def plot_popularity_trends(df):
 def compute_stats(df):
     stats = df.copy()
 
-    stats["total_votes"] = stats[PARTIES + ["blank", "null"]].sum(axis=1)
-    stats["valid_votes"] = stats[PARTIES].sum(axis=1)
-    stats["turnout_pct"] = (stats["total_votes"] / REGISTER) * 100
+    stats["total_votes"] = stats["valid"] + stats["null"]
 
-    # Calcular porcentajes del padrón para cada partido
+    # Calcular porcentaje sobre votos válidos
     for col in PARTIES:
-        stats[f"pct_{col}"] = (stats[col] / REGISTER) * 100
+        stats[f"pct_{col}"] = (stats[col] / stats["valid"]) * 100
 
-    # Calcular crecimiento entre cortes (primera derivada)
+    # Crecimiento (primera derivada)
     for col in PARTIES:
         stats[f"growth_{col}"] = stats[f"pct_{col}"].diff().fillna(0)
 
-    # Calcular tendencia (segunda derivada): cambio en el crecimiento
+    # Tendencia (segunda derivada)
     for col in PARTIES:
         stats[f"trend_{col}"] = stats[f"growth_{col}"].diff().fillna(0)
 
@@ -230,23 +232,22 @@ def get_trend_class(trend_value):
 def generate_results_table(stats):
     last = stats.iloc[-1]
 
-    # Crear lista de partidos con sus votos para ordenar
-    party_votes = [(p, last[p]) for p in PARTIES]
+    # Crear lista de partidos con sus votos y porcentaje
+    party_info = [(p, last[p], last[f"pct_{p}"]) for p in PARTIES]
     # Ordenar por votos de mayor a menor
-    party_votes.sort(key=lambda x: x[1], reverse=True)
+    party_info.sort(key=lambda x: x[1], reverse=True)
 
     rows = []
-    for p, votes in party_votes:
+    for p, votes, pct in party_info:
         trend = last[f"trend_{p}"]
         trend_indicator = get_trend_indicator(trend)
         trend_class = get_trend_class(trend)
 
         rows.append(f"""
         <tr>
-            <td>
-                {PARTY_NAMES[p]}
-            </td>
-            <td>{votes:,}</td>
+            <td>{PARTY_NAMES[p]}</td>
+            <td>{int(votes):,}</td>
+            <td>{pct:.2f}%</td>
             <td class="{trend_class}">{trend_indicator}</td>
         </tr>
         """)
@@ -257,6 +258,7 @@ def generate_results_table(stats):
             <tr>
                 <th>Partido</th>
                 <th>Votos</th>
+                <th>Porcentaje</th>
                 <th>Tendencia</th>
             </tr>
         </thead>
@@ -267,93 +269,139 @@ def generate_results_table(stats):
     """
 
 
-def generate_turnout_summary(stats):
-    last = stats.iloc[-1]
-    return f"""
-    <div class="summary">
-        <p><strong>Participación:</strong> {last["total_votes"]:,} votos</p>
-        <p><strong>Porcentaje del padrón:</strong> {last["turnout_pct"]:.2f}%</p>
-    </div>
-    """
+def plot_votes_per_cut(df):
+    fig, ax = plt.subplots(figsize=(12, 8))
+
+    x_labels = df["timestamp"].apply(format_ts)
+    x = range(len(df))
+
+    for party in PARTIES:
+        ax.plot(
+            x,
+            df[party],
+            marker="o",
+            label=PARTY_NAMES[party],
+            color=COLORS.get(party, "#333333"),
+            linewidth=2,
+        )
+
+        # Mostrar último valor sobre el punto final
+        ax.annotate(
+            f"{df[party].iloc[-1]:,}",
+            xy=(x[-1], df[party].iloc[-1]),
+            xytext=(8, 0),
+            textcoords="offset points",
+            fontsize=9,
+            color=COLORS.get(party, "#333333"),
+            va="center",
+        )
+
+    ax.set_title("Votos por Partido en cada Corte")
+    ax.set_xlabel("Hora")
+    ax.set_ylabel("Cantidad de Votos")
+    ax.set_xticks(list(x))
+    ax.set_xticklabels(x_labels, rotation=45)
+    ax.grid(True, axis="y", linestyle="--", alpha=0.6)
+    ax.legend()
+
+    buffer = BytesIO()
+    plt.tight_layout()
+    fig.savefig(buffer, format="png")
+    plt.close(fig)
+
+    buffer.seek(0)
+    return base64.b64encode(buffer.read()).decode("utf-8")
 
 
-def generate_html(img_base64, popularity_img_base64, turnout_html, table_html):
+def generate_html(img_base64, popularity_img_base64, table_html, df):
+    last = df.iloc[-1]
+    votos_emitidos = last["valid"] + last["null"]
+    votos_nulos = last["null"]
+    votes_per_cut_img = plot_votes_per_cut(df)
+
     return f"""<!DOCTYPE html>
 <html lang="es">
-    <head>
-        <meta charset="utf-8">
-        <title>Elecciones Costa Rica 2026 | Primera Ronda</title>
-        <style>
-            body {{
-                font-family: Arial, sans-serif;
-                padding: 1rem;
-                max-width: 60rem;
-                margin: auto;
-            }}
-            h1, h2 {{
-                text-align: center;
-                margin: 4rem 0;
-            }}
-            .chart {{
-                margin: 2rem 0;
-                text-align: center;
-            }}
-            img.chart-img {{
-                width: 100%;
-                max-width: 48rem;
-            }}
-            table {{
-                width: 100%;
-                border-collapse: collapse;
-                margin-top: 2rem;
-            }}
-            th, td {{
-                padding: 0.6rem;
-                border-bottom: 1px solid #ddd;
-                text-align: center;
-            }}
-            th {{
-                background: #f3f3f3;
-            }}
-            .flag {{
-                width: 24px;
-                vertical-align: middle;
-                margin-right: 0.4rem;
-            }}
-            .summary {{
-                margin: 1.5rem 0;
-                text-align: center;
-                font-size: 1.1rem;
-            }}
-            .trend-up {{
-                color: #22c55e;
-                font-weight: bold;
-            }}
-            .trend-down {{
-                color: #ef4444;
-                font-weight: bold;
-            }}
-            .trend-neutral {{
-                color: #6b7280;
-                font-weight: bold;
-            }}
-        </style>
-    </head>
-    <body>
-        <h1>Elecciones Costa Rica 2026 | Primera Ronda</h1>
-        {turnout_html}
-        <hr>
-        <h2>Evolución de Votos</h2>
-        {table_html}
-        <div class="chart">
-            <img class="chart-img" src="data:image/png;base64,{img_base64}" alt="Votos en el tiempo">
-        </div>
-        <hr>
-        <h2>Tendencia</h2>
-        <div class="chart">
-            <img class="chart-img" src="data:image/png;base64,{popularity_img_base64}" alt="Tendencia">
-        </div>
-    </body>
+<head>
+    <meta charset="utf-8">
+    <title>Elecciones Costa Rica 2022 | Primera Ronda</title>
+    <style>
+        body {{
+            font-family: Arial, sans-serif;
+            padding: 1rem;
+            max-width: 60rem;
+            margin: auto;
+        }}
+        h1, h2 {{
+            text-align: center;
+            margin: 4rem 0;
+        }}
+        .chart {{
+            margin: 2rem 0;
+            text-align: center;
+        }}
+        img.chart-img {{
+            width: 100%;
+            max-width: 48rem;
+        }}
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 2rem;
+        }}
+        th, td {{
+            padding: 0.6rem;
+            border-bottom: 1px solid #ddd;
+            text-align: center;
+        }}
+        th {{
+            background: #f3f3f3;
+        }}
+        .flag {{
+            width: 24px;
+            vertical-align: middle;
+            margin-right: 0.4rem;
+        }}
+        .summary {{
+            margin: 1.5rem 0;
+            text-align: center;
+            font-size: 1.1rem;
+        }}
+        .trend-up {{
+            color: #22c55e;
+            font-weight: bold;
+        }}
+        .trend-down {{
+            color: #ef4444;
+            font-weight: bold;
+        }}
+        .trend-neutral {{
+            color: #6b7280;
+            font-weight: bold;
+        }}
+    </style>
+</head>
+<body>
+    <h1>Elecciones Costa Rica 2026 | Primera Ronda</h1>
+    <div class="summary">
+        Votos emitidos: {votos_emitidos:,} | Nulos y blancos: {votos_nulos:,}
+    </div>
+    {table_html}
+    <hr>
+    <h2>Votos por Corte</h2>
+    <div class="chart">
+        <img class="chart-img" src="data:image/png;base64,{votes_per_cut_img}" alt="Votos por Corte">
+    </div>
+    <hr>
+    <h2>Evolución de Votos</h2>
+    <div class="chart">
+        <img class="chart-img" src="data:image/png;base64,{img_base64}" alt="Votos en el tiempo">
+    </div>
+    <hr>
+    <h2>Tendencia</h2>
+    <div class="chart">
+        <img class="chart-img" src="data:image/png;base64,{popularity_img_base64}" alt="Tendencia">
+    </div>
+</body>
 </html>
 """
 
@@ -376,10 +424,9 @@ if __name__ == "__main__":
 
     img_base64 = plot_votes_over_time(df)
     popularity_img_base64 = plot_popularity_trends(df)
-    turnout_html = generate_turnout_summary(stats)
     table_html = generate_results_table(stats)
 
-    html = generate_html(img_base64, popularity_img_base64, turnout_html, table_html)
+    html = generate_html(img_base64, popularity_img_base64, table_html, df)
 
     with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
         f.write(html)
