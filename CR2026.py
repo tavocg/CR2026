@@ -381,7 +381,7 @@ def generate_html(img_base64, popularity_img_base64, table_html, df):
     </style>
 </head>
 <body>
-    <h1>Elecciones Costa Rica 2026 | Primera Ronda</h1>
+    <h1>Elecciones Costa Rica 2022 | Primera Ronda</h1>
     <div class="summary">
         Votos emitidos: {votos_emitidos:,} | Nulos y blancos: {votos_nulos:,}
     </div>
