@@ -8,7 +8,7 @@ from io import BytesIO
 import pandas as pd
 import matplotlib.pyplot as plt
 
-REGISTER = 3541908
+REGISTER = 3731788
 
 COLUMNS = [
     "timestamp",
@@ -38,9 +38,9 @@ COLORS = {
 PARTIES = ["ppso", "pln", "cac", "pusc", "fa", "nr", "plp"]
 
 PARTY_NAMES = {
-    "ppso": "PSD",
+    "ppso": "PPSO",
     "pln": "PLN",
-    "cac": "PAC",
+    "cac": "CAC",
     "pusc": "PUSC",
     "fa": "FA",
     "nr": "NR",
@@ -323,7 +323,7 @@ def generate_html(img_base64, popularity_img_base64, table_html, df):
 <html lang="es">
 <head>
     <meta charset="utf-8">
-    <title>Elecciones Costa Rica 2022 | Primera Ronda</title>
+    <title>Elecciones Costa Rica 2026 | Primera Ronda</title>
     <style>
         body {{
             font-family: Arial, sans-serif;
